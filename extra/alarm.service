@@ -1,0 +1,12 @@
+Description=alarm Service
+After=multi-user.target
+
+[Service]
+Type=idle
+User=root
+WorkingDirectory=/opt/server_alarm
+ExecStart=/usr/bin/python3 /opt/server_alarm/server_alarm.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
