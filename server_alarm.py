@@ -2,7 +2,9 @@
 import sqlite3
 import folium
 from flask import Flask, request, jsonify , render_template_string
-
+import socket
+import base64
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 from urllib.parse import parse_qs
@@ -24,7 +26,6 @@ def readLastDataDb(num = 0 ):
         sqlite_select_query="select * from positions order by id desc limit " + str(num)
         cursor.execute(sqlite_select_query)
         records = cursor.fetchall()
-        print (records)
         for row in records:
             output_dict = dict (
                 id = [row[0]], 
@@ -40,7 +41,9 @@ def readLastDataDb(num = 0 ):
                 longsm = [row[10]],
                 accuracygsm = [row[11]],
                 alarmon = [row[12]],
-                alarmstatus = [row[13]] 
+                alarmstatus = [row[13]] ,
+                photo = [row[14]] ,
+
             )
             output_array.append(output_dict)
         cursor.close()
@@ -116,8 +119,25 @@ def ListChipid (chipid):
         output.append(row[0])
     return output
 
-def UpdateConfig (input):
-    print (input)
+def UpdateLastDataDb (img):
+    try:
+        sqliteConnection = sqlite3.connect('mydatabase.db')
+        cursor = sqliteConnection.cursor()
+        print("Connected to SQLite")
+        sqlite_update_table_query = "UPDATE positions SET photo = '" + img.decode('utf-8') + "' WHERE id = (SELECT MAX(id) FROM positions)"
+        cursor.execute(sqlite_update_table_query)
+        sqliteConnection.commit()
+        print("Record Updated successfully into sqlite table")
+        cursor.close()
+    except sqlite3.Error as error:
+        print ("Error while connecting to sqlite", error)
+    finally:
+        if sqliteConnection:
+            sqliteConnection.close()
+            print("The SQLite connection is closed")
+
+
+def UpdateConfigDb (input):
     try:
         sqliteConnection = sqlite3.connect('mydatabase.db')
         cursor = sqliteConnection.cursor()
@@ -157,7 +177,6 @@ def ReadConfig (chipid):
         else:
             sqlite_select_query="select * from config WHERE chipid = '" + chipid + "'"
         cursor.execute(sqlite_select_query)
-        print ("sqlite_select_query : " + sqlite_select_query)
         records = cursor.fetchall()
         if ((len(records) == 0) and (chipid != "")):
             sqlite_insert_query = "INSERT INTO config (chipid, alarmon, SMS, SMSC, delay)  VALUES ('"
@@ -190,7 +209,6 @@ def saveDataDb (input_dict):
         sqliteConnection = sqlite3.connect('mydatabase.db')
         cursor = sqliteConnection.cursor()
         print("Connected to SQLite")
-        print (input_dict)
 
         sqlite_create_table_query = """CREATE TABLE IF NOT EXISTS positions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -206,13 +224,16 @@ def saveDataDb (input_dict):
             longsm REAL, 
             accuracygsm REAL ,
             alarmon INTEGER,
-            alarmstatus INTEGER)"""
+            alarmstatus INTEGER,
+            photo TEXT
+            )"""
         cursor.execute(sqlite_create_table_query)
+        print ("sqlite_create_table_query : " + sqlite_create_table_query)
         sqliteConnection.commit()
         print("SQLite table created")
 
 
-        sqlite_insert_query = "INSERT INTO positions (chipid, date, time, bat, lat, lon, speed, accuracy, longsm, latgsm, accuracygsm, alarmon, alarmstatus)  VALUES ('"
+        sqlite_insert_query = "INSERT INTO positions (chipid, date, time, bat, lat, lon, speed, accuracy, longsm, latgsm, accuracygsm, alarmon, alarmstatus,photo)  VALUES ('"
 
         sqlite_insert_query += input_dict['chipid'] + "','"
         sqlite_insert_query += input_dict['date'] + "','"
@@ -226,9 +247,13 @@ def saveDataDb (input_dict):
         sqlite_insert_query += input_dict['latgsm'] + ","    
         sqlite_insert_query += input_dict['accuracygsm'] + ","
         sqlite_insert_query += input_dict['alarmon'] + ","
-        sqlite_insert_query += input_dict['alarmstatus'] + ")"   
+        sqlite_insert_query += input_dict['alarmstatus']+ ","
+        if input_dict.get('photo') :
+            sqlite_insert_query += input_dict['photo'] + ")"
+        else:
+            sqlite_insert_query += "''" + ")"
         
-        print (sqlite_insert_query) ; 
+        print ("sqlite_insert_query : " + sqlite_insert_query)
         
         cursor.execute(sqlite_insert_query)
         sqliteConnection.commit()
@@ -248,87 +273,98 @@ def saveDataDb (input_dict):
 def createMap(data):
     print ("create map")
 
-    firstdata = data[0]
-    lat = firstdata['lat'][0]
-    lon = firstdata['lon'][0]
-    latgsm = firstdata['latgsm'][0]
-    longsm = firstdata['longsm'][0]
+    if data:
+            
+        firstdata = data[0]
+        chipid = firstdata['chipid'][0]
+        lat = firstdata['lat'][0]
+        lon = firstdata['lon'][0]
+        latgsm = firstdata['latgsm'][0]
+        longsm = firstdata['longsm'][0]
 
-    print ("longitude : ")
-    print (lon)
-    print ("latitude : ")
-    print (lat)
-    print ("longitude gsm : ")
-    print (longsm)
-    print ("latitude gsm : ")
-    print (latgsm)
-
-    if (lat != 0  and lon != 0):
-        position = (lat, lon)
-
-    else:
-        position = (latgsm, longsm)
-    print (position)
-    map = folium.Map(
-        location=position,
-        zoom_start=15
-    )
-
-    accuracy = firstdata['accuracygsm'][0]
-    accuracygsm = firstdata['accuracygsm'][0]
-    if (lat != 0  and lon != 0):
-        print ("position gps found")
-        position = (lat, lon)
-        folium.Marker(
-            location=position,
-            tooltip="Click me!",
-            popup="Last position\r\n" + firstdata['date'][0]+' '+firstdata['time'][0],
-            icon=folium.Icon(color="blue"),
-        ).add_to(map)
-    else:
-        position = (latgsm, longsm)
-        kw = {"prefix": "fa", "color": "blue", "icon": "tower-broadcast"}
-        angle = 0
-        icon = folium.Icon(angle=angle, **kw)
-        folium.Marker(
-            location=position,
-            tooltip="Click me!",
-            popup="Last position\r\n" + firstdata['date'][0]+' '+firstdata['time'][0],
-            icon=icon
-        ).add_to(map)
-
-    if (latgsm != 0  and longsm != 0):
-        print ("position gsm found")
-        position = (latgsm, longsm)
-        folium.Circle(
-            location=position,
-            radius=accuracygsm,
-            color="blue",
-            fill=True,
-            fill_opacity=0.2,
-            tooltip="GSM Accuracy",
-        ).add_to(map)
-
-
-    lastpoints = []
-    for row in data:
-        lat = row['lat'][0]
-        lon = row['lon'][0]
-        latgsm = row['latgsm'][0]
-        longsm = row['longsm'][0]
+        print ("chipid : " + chipid)
+        print ("longitude : " + str (lon))
+        print ("latitude : " + str (lat))
+        print ("latitude gsm : " + str (latgsm))
+        print ("longitude gsm : " + str (longsm))
+    
+    
         if (lat != 0  and lon != 0):
             position = (lat, lon)
         else:
             position = (latgsm, longsm)
-        lastpoints.append(position)
-        folium.PolyLine(lastpoints, tooltip="las position").add_to(map)
+        map = folium.Map(
+            location=position,
+            zoom_start=15
+        )
+
+        accuracy = firstdata['accuracygsm'][0]
+        accuracygsm = firstdata['accuracygsm'][0]
+        popupcontent = 'Last&nbsp;position\r\n' + firstdata['date'][0]+' '+firstdata['time'][0] 
+        popupcontent += '<br><a href="/displaydata?chipid=' + chipid + '"> chipid : ' + chipid + '</a>'
+        popupcontent += '<br>bat : ' + str(firstdata['bat'][0])
+        if firstdata['photo'][0] != "":
+            popupcontent += '<br><img src="data:image/jpeg;base64,' + firstdata['photo'][0] + '" width="200" height="200" alt="photo">'
+        if (lat != 0  and lon != 0):
+            popupcontent += '<br>lat : ' + str(lat) + '<br>lon : ' + str(lon) + '<br>accuracy : ' + str(accuracy)
+            print ("position gps found")
+            position = (lat, lon)
+            folium.Marker(
+                location=position,
+                tooltip="Click me!",
+                popup=popupcontent,
+                icon=folium.Icon(color="blue"),
+            ).add_to(map)
+        else:
+            position = (latgsm, longsm)
+            popupcontent += '<br>latgsm : ' + str(latgsm) + '<br>longsm : ' + str(longsm) + '<br>accuracygsm : ' + str(accuracygsm)
+            kw = {"prefix": "fa", "color": "blue", "icon": "tower-broadcast"}
+            angle = 0
+            icon = folium.Icon(angle=angle, **kw)
+
+            folium.Marker(
+                location=position,
+                tooltip="Click me!",
+                popup=popupcontent,
+                icon=icon
+            ).add_to(map)
+
+        if (latgsm != 0  and longsm != 0):
+            print ("position gsm found")
+            position = (latgsm, longsm)
+            folium.Circle(
+                location=position,
+                radius=accuracygsm,
+                color="blue",
+                fill=True,
+                fill_opacity=0.2,
+                tooltip="GSM Accuracy",
+            ).add_to(map)
+
+
+        lastpoints = []
+        for row in data:
+            lat = row['lat'][0]
+            lon = row['lon'][0]
+            latgsm = row['latgsm'][0]
+            longsm = row['longsm'][0]
+            if (lat != 0  and lon != 0):
+                position = (lat, lon)
+            else:
+                position = (latgsm, longsm)
+            lastpoints.append(position)
+            folium.PolyLine(lastpoints, tooltip="las position").add_to(map)
+    else :
+        map = folium.Map(
+            zoom_start=15
+        )
     return map
 #access to Web Server 
 
 @app.route("/")
 def fullscreen():
     data = readLastDataDb(10)
-    print (data)
+  
 
     map = createMap(data)
 
@@ -342,6 +378,7 @@ def fullscreen():
             <!DOCTYPE html>
             <html>
                 <head>
+                    <meta http-equiv="refresh" content="60">
                     {{ header|safe }}
                 </head>
                 <body>
@@ -362,15 +399,53 @@ def fullscreen():
         script=script,
     )
 
+
+@app.route("/upload", methods=['POST','GET'])
+def upload():
+    if request.method == 'GET':
+        input_dict = request.args.to_dict()
+    if request.method == 'POST':
+        input_dict = request.form.to_dict()
+
+    image = request.files['fileToUpload']
+
+    content = image.read() # Get the file contents
+    file_name = image.filename # Get the file name
+    UpdateLastDataDb(base64.b64encode(content))
+
+    body_html = "Upload data received : " + str(image.filename)
+    header = ""
+    script = ""
+
+    return render_template_string(
+        """
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    {{ header|safe }}
+                </head>
+                <body>
+                {{ body_html|safe }}
+
+                </body>
+                <script>
+                    {{ script|safe }}
+                </script>
+            </html> 
+
+        """,
+        body_html=body_html,
+        header=header,
+        script=script,
+    )
 @app.route("/updateconfig", methods=['POST','GET'])
 def updateconfig():
     if request.method == 'GET':
         input_dict = request.args.to_dict()
     if request.method == 'POST':
         input_dict = request.form.to_dict()
-    print (input_dict)
 
-    UpdateConfig (input_dict)
+    UpdateConfigDb (input_dict)
 
 
     body_html = str(input_dict)
@@ -416,16 +491,11 @@ def display():
         chipid = ""
     print  ("chipid : " + chipid)
     resultlistchid = ListChipid ("")
-    print (resultlistchid)
-
     #readconfig 
     dataconfig = ReadConfig (chipid)
-    print (dataconfig)
-
-
 
     data = ListChipid (chipid)
-    body_html = str(dataconfig)
+    body_html = ""
     header = ""
     script = ""
 
@@ -440,7 +510,8 @@ def display():
                 </head>
                 <body>
                     <h1>info device {{ chipid|safe }}</h1>
-                    <form method="POST"action="{{ url_for('display') }}">
+                    <a href="{{ url_for('fullscreen')}}"><button>Home Page</button></a>
+                    <form method="POST" action="{{ url_for('display') }}">
                         <label for="chipid">Choose chipid:</label>
                         <select name="chipid" id="chipid">
                             {%for i in range(0, lenlistchipid)%}
@@ -451,7 +522,7 @@ def display():
                     </form>
                     <br>
 
-                    <form method="POST"action="{{ url_for('updateconfig') }}">
+                    <form method="POST" action="{{ url_for('updateconfig') }}">
                     {%for i in range(0, lendataconfig)%}
                         <table border=2px>
                             <thead>
@@ -480,7 +551,6 @@ def display():
                         </table>
                     {%endfor%}
                     </form>
-
                     {{ body_html|safe }}
                     <script>
                         {{ script|safe }}
@@ -520,22 +590,24 @@ def getall(version):
 @app.route("/api/<version>/recordset", methods=['POST','GET'])
 def record(version):
     print (version)
+  
     if request.method == 'GET':
         input_dict = request.args.to_dict()
     if request.method == 'POST':
         input_dict = request.form.to_dict()
+    print (request)
 
+    print (input_dict)
     saveDataDb (input_dict)
     return f"record"
 
 @app.route("/api/<version>/configget", methods=['POST','GET'])
 def config(version):
     print (version)
-    print (request.form)
+ 
     input_dict = request.form.to_dict()
     data = ReadConfig (input_dict['chipid'])
     print ("config for  " + input_dict['chipid'])
-    print (data)
 
     if len(data) != 0:
         config = {
@@ -560,4 +632,5 @@ def config(version):
 
 
 if __name__ == "__main__":
+    socket.setdefaulttimeout(60)
     app.run(debug=True,host='0.0.0.0', port=8000)
