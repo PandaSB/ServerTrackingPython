@@ -15,15 +15,17 @@ app = Flask(__name__)
 
 #Access to Database 
 
-def readLastDataDb(num = 0 ):
+def readLastDataDb(chipid="",num = 0 ):
     try:
         output_array = []
         sqliteConnection = sqlite3.connect('mydatabase.db')
         cursor = sqliteConnection.cursor()
-        print("Connected to SQLite")  
         if (num == 0):
-            num = 1
-        sqlite_select_query="select * from positions order by id desc limit " + str(num)
+            num = 10
+        if (chipid == ""):
+            sqlite_select_query="select * from positions order by id desc limit " + str(num)
+        else:
+            sqlite_select_query="select * from positions WHERE chipid like '" + chipid + "' order by id desc limit " + str(num)
         cursor.execute(sqlite_select_query)
         records = cursor.fetchall()
         for row in records:
@@ -73,7 +75,7 @@ def readAllDataDb():
             print("The SQLite connection is closed")
     return records
 
-def ReadDataDb (chipid):
+def ReadDataDb (chipid,num = 0):
     records = []
     try:
         sqliteConnection = sqlite3.connect('mydatabase.db')
@@ -81,6 +83,8 @@ def ReadDataDb (chipid):
         print("Connected to SQLite")  
 
         sqlite_select_query="select * from positions WHERE 'chipid' = " + chipid
+        if (num != 0):
+            sqlite_select_query += " order by id desc limit " + str(num)
         cursor.execute(sqlite_select_query)
         records = cursor.fetchall()
     except sqlite3.Error as error:
@@ -104,7 +108,6 @@ def ListChipid (chipid):
             sqlite_select_query="select distinct chipid from positions"
         else:   
             sqlite_select_query="select distinct chipid from positions WHERE chipid = '" + chipid +"'"
-        print ("sqlite_select_query : " + sqlite_select_query)
         cursor.execute(sqlite_select_query)
         records = cursor.fetchall()
     except sqlite3.Error as error:
@@ -115,7 +118,6 @@ def ListChipid (chipid):
             print("The SQLite connection is closed")
     output = []
     for row in records:
-        print ( "row: " + row[0])
         output.append(row[0])
     return output
 
@@ -185,7 +187,6 @@ def ReadConfig (chipid):
             sqlite_insert_query += "" + "','"
             sqlite_insert_query += "+33689004000" + "',"
             sqlite_insert_query += "60" + ")"  
-            print("sqlite_insert_query : " + sqlite_insert_query) 
             cursor.execute(sqlite_insert_query)
             sqliteConnection.commit()
             print("SQLite set default config info ")
@@ -193,7 +194,6 @@ def ReadConfig (chipid):
             sqlite_select_query="select * from config"
         else:
             sqlite_select_query="select * from config WHERE chipid = '" + chipid + "'"
-        print ("sqlite_select_query : " + sqlite_select_query)
         cursor.execute(sqlite_select_query)
         records = cursor.fetchall()
     except sqlite3.Error as error:
@@ -228,7 +228,6 @@ def saveDataDb (input_dict):
             photo TEXT
             )"""
         cursor.execute(sqlite_create_table_query)
-        print ("sqlite_create_table_query : " + sqlite_create_table_query)
         sqliteConnection.commit()
         print("SQLite table created")
 
@@ -252,9 +251,7 @@ def saveDataDb (input_dict):
             sqlite_insert_query += input_dict['photo'] + ")"
         else:
             sqlite_insert_query += "''" + ")"
-        
-        print ("sqlite_insert_query : " + sqlite_insert_query)
-        
+                
         cursor.execute(sqlite_insert_query)
         sqliteConnection.commit()
         print("Python Variables inserted successfully into SqliteDb_developers table")
@@ -281,13 +278,6 @@ def createMap(data):
         lon = firstdata['lon'][0]
         latgsm = firstdata['latgsm'][0]
         longsm = firstdata['longsm'][0]
-
-        print ("chipid : " + chipid)
-        print ("longitude : " + str (lon))
-        print ("latitude : " + str (lat))
-        print ("latitude gsm : " + str (latgsm))
-        print ("longitude gsm : " + str (longsm))
-    
     
         if (lat != 0  and lon != 0):
             position = (lat, lon)
@@ -298,11 +288,14 @@ def createMap(data):
             zoom_start=15
         )
 
-        accuracy = firstdata['accuracygsm'][0]
+        accuracy = firstdata['accuracy'][0]
         accuracygsm = firstdata['accuracygsm'][0]
         popupcontent = 'Last&nbsp;position\r\n' + firstdata['date'][0]+' '+firstdata['time'][0] 
         popupcontent += '<br><a href="/displaydata?chipid=' + chipid + '"> chipid : ' + chipid + '</a>'
         popupcontent += '<br>bat : ' + str(firstdata['bat'][0])
+        popupcontent += '<br>speed : ' + str(firstdata['speed'][0])
+        popupcontent += '<br>alarmon : ' + str(firstdata['alarmon'][0])
+        popupcontent += '<br>alarmstatus : ' + str(firstdata['alarmstatus'][0])
         if firstdata['photo'][0] != "":
             popupcontent += '<br><img src="data:image/jpeg;base64,' + firstdata['photo'][0] + '" width="200" height="200" alt="photo">'
         if (lat != 0  and lon != 0):
@@ -353,7 +346,7 @@ def createMap(data):
             else:
                 position = (latgsm, longsm)
             lastpoints.append(position)
-            folium.PolyLine(lastpoints, tooltip="las position").add_to(map)
+            folium.PolyLine(lastpoints, tooltip="last position").add_to(map)
     else :
         map = folium.Map(
             zoom_start=15
@@ -363,7 +356,7 @@ def createMap(data):
 
 @app.route("/")
 def fullscreen():
-    data = readLastDataDb(10)
+    data = readLastDataDb("",10)
   
 
     map = createMap(data)
@@ -377,12 +370,15 @@ def fullscreen():
         """
             <!DOCTYPE html>
             <html>
+
                 <head>
                     <meta http-equiv="refresh" content="60">
                     {{ header|safe }}
                 </head>
+                <nav>
+                <h1>10 dernieres positions</h1>
+                </nav>
                 <body>
-                    <h1>10 dernieres positions</h1>
                     {{ body_html|safe }}
                     <script>
                         {{ script|safe }}
@@ -489,12 +485,17 @@ def display():
         chipid = input_dict['chipid']
     else:
         chipid = ""
-    print  ("chipid : " + chipid)
+
+    if 'nbrecord' in input_dict.keys():
+        nbrecord = int(input_dict['nbrecord'])
+    else:
+        nbrecord = 10   
+
     resultlistchid = ListChipid ("")
     #readconfig 
     dataconfig = ReadConfig (chipid)
+    data = readLastDataDb (chipid, nbrecord)
 
-    data = ListChipid (chipid)
     body_html = ""
     header = ""
     script = ""
@@ -517,11 +518,12 @@ def display():
                             {%for i in range(0, lenlistchipid)%}
                                 <option value="{{listchipid[i]}}">{{listchipid[i]}}</option>
                             {%endfor%}
+                            <label for="nbrecord">Nb record</label> 
+                            <input id="nbrecord" name="nbrecord" type="number" value="{{ nbrecord }}" />
                         </select>
                         <button type="submit">submit</button>
                     </form>
                     <br>
-
                     <form method="POST" action="{{ url_for('updateconfig') }}">
                     {%for i in range(0, lendataconfig)%}
                         <table border=2px>
@@ -533,7 +535,7 @@ def display():
                                     <th scope="col">SMS</th>
                                     <th scope="col">SMSC</th>
                                     <th scope="col">delay</th>
-                                    <th scope="col">Action</th>>
+                                    <th scope="col">Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -551,7 +553,60 @@ def display():
                         </table>
                     {%endfor%}
                     </form>
+
+                        <br>
+                        <table border=2px>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Id</th>
+                                    <th scope="col">ChipId</th>
+                                    <th scope="col">Time</th>
+                                    <th scope="col">Date</th>
+                                    <th scope="col">bat</th>
+                                    <th scope="col">lat</th>
+                                    <th scope="col">lon</th>
+                                    <th scope="col">speed</th>
+                                    <th scope="col">accuracy</th>
+                                    <th scope="col">longsm</th>
+                                    <th scope="col">latgsm</th>
+                                    <th scope="col">accuracygsm</th>
+                                    <th scope="col">alarmon</th>
+                                    <th scope="col">alarmstatus</th>
+                                    <th scope="col">photo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                    {%for i in range(0, lendata)%}
+                                <tr>     
+                                <th scope="row">{{data[i]['id'][0]}}</th>
+                                <td>{{data[i]['chipid'][0]}}</td>
+                                <td>{{data[i]['time'][0]}}</td>
+                                <td>{{data[i]['date'][0]}}</td>
+                                <td>{{data[i]['bat'][0]}}</td>
+                                <td>{{data[i]['lat'][0]}}</td>
+                                <td>{{data[i]['lon'][0]}}</td>
+                                <td>{{data[i]['speed'][0]}}</td>
+                                <td>{{data[i]['accuracy'][0]}}</td>
+                                <td>{{data[i]['longsm'][0]}}</td>
+                                <td>{{data[i]['latgsm'][0]}}</td>
+                                <td>{{data[i]['accuracygsm'][0]}}</td>
+                                <td>{{data[i]['alarmon'][0]}}</td>
+                                <td>{{data[i]['alarmstatus'][0]}}</td>
+                                <td>
+                                    {% if data[i]['photo'][0] != "" %}
+                                        <img src="data:image/jpeg;base64,{{data[i]['photo'][0]}}" width="200" height="200" alt="photo">
+                                    {% else %}
+                                        <img src="data:image/jpeg;base64," width="200" height="200" alt="photo">
+                                    {% endif %}
+                                </td>
+                                   
+                                </tr>
+                                    {%endfor%}
+                            </tbody>
+                        </table>
+                   
                     {{ body_html|safe }}
+                   
                     <script>
                         {{ script|safe }}
                     </script>
@@ -566,13 +621,15 @@ def display():
         header=header,
         body_html=body_html,
         script=script,
+        nbrecord=nbrecord,
+        data=data,
+        lendata = len(data),
     )
 
 
 
 @app.route("/api/<version>/getall", methods=['POST','GET'])
 def getall(version):
-    print (version)
     input_dict = request.form.to_dict()
     data = readAllDataDb()
 
@@ -589,25 +646,20 @@ def getall(version):
             
 @app.route("/api/<version>/recordset", methods=['POST','GET'])
 def record(version):
-    print (version)
   
     if request.method == 'GET':
         input_dict = request.args.to_dict()
     if request.method == 'POST':
         input_dict = request.form.to_dict()
-    print (request)
 
-    print (input_dict)
     saveDataDb (input_dict)
     return f"record"
 
 @app.route("/api/<version>/configget", methods=['POST','GET'])
 def config(version):
-    print (version)
  
     input_dict = request.form.to_dict()
     data = ReadConfig (input_dict['chipid'])
-    print ("config for  " + input_dict['chipid'])
 
     if len(data) != 0:
         config = {
